@@ -123,6 +123,33 @@ def cmd_check(decoded, only):
         apply_rule(decoded, rule, write=False)
     print("CHECK OK: all %d rules match" % len(variant["patches"]))
 
+def cmd_patch(decoded, only, no_res):
+    """Apply a template in place to an already-decoded tree (write=True).
+    With --no-res, skip rules that target res/ (needs aapt2 to rebuild)."""
+    templates = [t for t in load_templates() if (not only or t["id"] == only)]
+    ver, _ = read_version(decoded)
+    pkg = None
+    mf = os.path.join(decoded, "AndroidManifest.xml")
+    if os.path.isfile(mf):
+        with open(mf, encoding="utf-8", errors="ignore") as f:
+            m = re.search(r'package="([^"]+)"', f.read())
+            pkg = m.group(1) if m else None
+    tpl = select_template(pkg, ver, templates) if pkg else None
+    if not tpl:
+        tpl = next((t for t in templates if select_variant(t, ver)), None)
+    if not tpl:
+        sys.exit("no template matches version %s" % ver)
+    variant = select_variant(tpl, ver)
+    applied = skipped = 0
+    for rule in variant["patches"]:
+        if no_res and rule["file"].startswith("res/"):
+            print("  skip (res) [%s]" % rule["name"])
+            skipped += 1
+            continue
+        apply_rule(decoded, rule, write=True)
+        applied += 1
+    print("PATCH OK: %d applied, %d skipped (template %s)" % (applied, skipped, tpl["id"]))
+
 
 def cmd_list():
     for t in load_templates():
@@ -189,6 +216,8 @@ def main():
     ap = argparse.ArgumentParser(description="reverser.id patch runner")
     ap.add_argument("apk", nargs="?")
     ap.add_argument("--check", metavar="DECODED_DIR")
+    ap.add_argument("--patch", metavar="DECODED_DIR", help="apply in place to a decoded tree")
+    ap.add_argument("--no-res", dest="no_res", action="store_true", help="skip res/ rules (on-device, no aapt2)")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--only", help="restrict to one template id/path (with --check)")
     ap.add_argument("--out")
@@ -205,6 +234,8 @@ def main():
         cmd_list(); return
     if a.check:
         cmd_check(a.check, a.only); return
+    if a.patch:
+        cmd_patch(a.patch, a.only, a.no_res); return
     if not a.apk:
         ap.error("need an APK, or --check DIR, or --list")
     if not a.out:
