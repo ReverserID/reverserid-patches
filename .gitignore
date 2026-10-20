@@ -2,3 +2,4 @@
 *.keystore
 .verify-*
 __pycache__/
+*.exe

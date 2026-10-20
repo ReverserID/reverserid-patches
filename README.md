@@ -67,6 +67,14 @@ python apply.py --check <decoded_dir>         # validate rules against a decoded
 python apply.py app.apk --out patched.apk     # decode -> patch -> rebuild -> align -> sign
 ```
 
+A Crystal port with identical semantics ships as `apply.cr` (verified against
+`apply.py`: same `--list`/`--check` output, all rules anchor identically):
+
+```sh
+crystal build --release apply.cr -o apply   # or: crystal run apply.cr -- <args>
+./apply --check <decoded_dir>
+```
+
 `--check` is the fast correctness gate: it confirms every rule still anchors
 exactly `count` times against a clean decode — run it whenever a target app
 updates.
