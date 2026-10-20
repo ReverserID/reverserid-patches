@@ -1,11 +1,10 @@
 # reverser.id patches
 
-One repository, one **list** of patch templates — like [nuclei-templates](https://github.com/projectdiscovery/nuclei-templates), but for APKs.
-A template declares a target package and, per app-version, a set of
-**find/replace rules** over the apktool-decoded tree (smali + decoded res).
-The reverser.id patcher app (egui, Android + desktop) reads a template and
-applies it on-device; `apply.py` is the reference engine with identical
-semantics.
+One repository, one **list** of patch templates — like [nuclei-templates](https://github.com/projectdiscovery/nuclei-templates),
+but for APKs. A template declares a target package and, per app-version, a set
+of **find/replace rules** over the apktool-decoded tree (smali + decoded res).
+The **RevID Patcher** app reads a template and applies it on-device; `apply.cr`
+is the reference runner with identical semantics.
 
 ## The list
 
@@ -15,84 +14,84 @@ semantics.
 
 Machine-readable index: [`index.json`](index.json).
 
-## Template format
+## Template format — `.rid`
 
-Nuclei-style YAML (schema: [`schema/template.schema.json`](schema/template.schema.json)):
+Templates use the line-oriented [`.rid` format](FORMAT.md): `key: value`
+metadata, `variant <regex>` sections, and `rule` blocks whose `find`/`replace`
+bodies are written **verbatim** between `<<<` fences — so multi-line smali pastes
+in exactly as apktool emits it, with no `\n` escaping.
 
-```yaml
+```
 id: hidemyemulator-premium
-info:
-  name: HideMyEmulator Premium Unlock
-  author: reverser.id
-  severity: info
-  tags: [premium, license, unlock]
-  description: ...
-target:
-  package: net.wowsoftware.hidemyemulator
-variants:                       # first variant whose match passes is applied
-  - match: { version_name: "^1\\.4" }   # regex over versionName
-    patches:
-      - name: "d9/b mapper -> premium"
-        file: "smali/d9/b.smali"         # path inside the decoded tree
-        find: "\\.method public static r\\(...\\)Lnb/s;.*?\\.end method"
-        replace: |-
-          .method public static r(...)Lnb/s;
-              ...
-        count: 1                          # required match count (abort on mismatch)
-        must_contain: ["reverser.id"]     # optional post-apply assertions
-build:
-  tool: apktool
-  sign: ephemeral
+target: net.wowsoftware.hidemyemulator
+name: HideMyEmulator Premium Unlock
+author: reverser.id
+tags: premium, license, unlock
+versions: 1.3 · 1.4
+source: https://play.google.com/store/apps/details?id=net.wowsoftware.hidemyemulator
+
+variant ^1\.4
+
+rule d9/b mapper -> premium
+file: smali/d9/b.smali
+count: 1
+find <<<
+\.method public static r\(Ljava/lang/String;Ljava/lang/String;Ljava/time/ZoneId;\)Lnb/s;.*?\.end method
+<<<
+replace <<<
+.method public static r(Ljava/lang/String;Ljava/lang/String;Ljava/time/ZoneId;)Lnb/s;
+    .locals 1
+    new-instance p0, Lnb/p;
+    const/4 v0, 0x0
+    invoke-direct {p0, v0, v0}, Lnb/p;-><init>(Ljava/lang/Long;Ljava/lang/String;)V
+    return-object p0
+.end method
+<<<
 ```
 
-Rules:
+Key invariants (full spec in [FORMAT.md](FORMAT.md)):
 
-- **Matching is always DOTALL.** Each rule must match exactly `count` times
-  (default 1) or the whole run aborts — the same safety invariant as a
-  hand-written patch. Rules apply in order (later rules see earlier edits).
-- **Backrefs in `replace`:** `$1` / `${1}`; literal `$` is `$$`. This is the
-  Rust/ECMAScript convention — the Rust engine uses it natively; `apply.py`
-  translates to Python `\g<N>`.
-- **`file`** is relative to the apktool-decoded root (`smali/…`, `res/…`,
-  `AndroidManifest.xml`).
+- Matching is always **DOTALL** (`.` spans newlines). Each rule must match at
+  least `count` times (default 1); the first `count` are replaced. Rules apply
+  in order (later rules see earlier edits).
+- Backrefs in `replace`: `$1` / `${1}`, literal `$` is `$$`.
+- `file` is relative to the decoded root (`smali/…`, `res/…`). On-device builds
+  skip `res/` rules (no aapt2) — keep functional edits in `smali/`.
 
-## Run (reference engine)
+## Run (reference runner)
 
-Requires Apktool 3.x (`apktool.jar`), Android build-tools (`zipalign`,
-`apksigner`), and a JDK.
+`apply.cr` is a single-file [Crystal](https://crystal-lang.org) program. Full
+decode/build/sign needs Apktool 3.x (`apktool.jar`), Android build-tools
+(`zipalign`, `apksigner`), and a JDK; `--check` needs only a decoded tree.
 
 ```sh
-python apply.py --list                       # print the list
-python apply.py --check <decoded_dir>         # validate rules against a decoded tree
-python apply.py app.apk --out patched.apk     # decode -> patch -> rebuild -> align -> sign
+crystal build --release apply.cr -o apply     # or: crystal run apply.cr -- <args>
+
+./apply --list                                # print the list
+./apply --check <decoded_dir>                 # validate rules against a decoded tree
+./apply --patch <decoded_dir> --no-res        # apply in place (on-device parity: no res)
+./apply app.apk --out patched.apk             # decode -> patch -> rebuild -> align -> sign
 ```
 
-A Crystal port with identical semantics ships as `apply.cr` (verified against
-`apply.py`: same `--list`/`--check` output, all rules anchor identically):
-
-```sh
-crystal build --release apply.cr -o apply   # or: crystal run apply.cr -- <args>
-./apply --check <decoded_dir>
-```
-
-`--check` is the fast correctness gate: it confirms every rule still anchors
-exactly `count` times against a clean decode — run it whenever a target app
+`--check` is the fast correctness gate: it confirms every rule still anchors the
+required number of times against a clean decode — run it whenever a target app
 updates.
 
 ## In the app
 
-The shipping patcher embeds the same engine in Rust (`src/template.rs` in the
-reverser.id patcher), so patching runs in-app on **Android and desktop**:
-decode → apply template (in-process) → rebuild → sign. Templates are fetched
-from this repo's list; no app update needed to add or fix a patch.
+**RevID Patcher** (Flutter, Android + desktop) embeds the same engine and runs
+patching **in-process**: decode → apply template → rebuild → sign. On Android
+this happens inside the app's own ART runtime via `DexClassLoader` (an installed
+app cannot spawn `dalvikvm`), with signing through the apksig API. The app reads
+this repo's list, so adding or fixing a patch needs no app update.
 
 ## Authoring a new template
 
-1. Decode a clean APK: `apktool d app.apk -o decoded`.
-2. Find the patch sites; write each as a `file` + `find` regex + `replace`.
-3. `python apply.py --check decoded` until all rules anchor `1x`.
-4. `python apply.py app.apk` → install → verify behavior on-device.
-5. Add the template under `templates/` and an entry to `index.json`.
+1. Decode a clean APK: `apktool d -r app.apk -o decoded`.
+2. Find the gate; write each edit as a `rule` with `file` + `find` + `replace`.
+3. `./apply --check decoded` until every rule anchors the required count.
+4. `./apply app.apk` (or the app) → install → verify behavior on-device.
+5. Add the `.rid` under `templates/` and an entry in `index.json`.
 
 ## Legal
 

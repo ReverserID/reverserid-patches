@@ -1,18 +1,20 @@
-# reverser.id patch runner (Crystal port of apply.py) — applies a nuclei-style
-# patch template to an APK, or validates templates against a decoded tree.
+# reverser.id patch runner (Crystal) — applies a `.rid` patch template to an
+# APK, or validates templates against a decoded tree.
 #
-# Build:  crystal build --release apply.cr          # -> ./apply
+# Build:  crystal build --release apply.cr -o apply
 # Usage:
 #   ./apply --check <decoded_dir>     # validate rules against a decoded tree
 #   ./apply --patch <decoded_dir>     # apply template in place (add --no-res on device)
 #   ./apply --list                    # print the template index
 #   ./apply <app.apk> [--out out.apk] # full decode -> patch -> build -> sign
 #
-# Semantics match apply.py exactly: matching is DOTALL, each rule must match at
-# least `count` times (the first `count` are replaced), replacements expand
-# $N / ${N} backrefs ($$ = literal $), CRLF is preserved, `must_contain` guards.
+# `.rid` format: `key: value` metadata, `variant <regex>` sections, and `rule`
+# blocks whose `find`/`replace` bodies are verbatim multi-line text fenced by
+# `<<<`. Matching is DOTALL, each rule must match at least `count` times (the
+# first `count` are replaced), replacements expand $N / ${N} backrefs ($$ = $),
+# CRLF is preserved, `must` substrings guard the result.
 
-require "yaml"
+require "yaml"          # only for reading apktool.yml
 require "option_parser"
 
 HERE      = __DIR__
@@ -20,12 +22,140 @@ TPL_DIR   = File.join(HERE, "templates")
 JAVA_OPTS = "-Xmx384M -XX:+UseSerialGC"
 SIGN_OPTS = "-Xmx256M"
 
-record Template, data : YAML::Any, path : String
+record Rule, name : String, file : String, find : String, replace : String,
+  count : Int32, must : Array(String)
+record Variant, version_name : String?, rules : Array(Rule)
+record Template, id : String, name : String, author : String, versions : String?,
+  source : String?, target : String, variants : Array(Variant), path : String
+
+def parse_rid(text : String, path : String) : Template
+  lines = text.gsub("\r\n", "\n").split("\n")
+
+  id = ""
+  name = ""
+  author = ""
+  versions : String? = nil
+  source : String? = nil
+  target = ""
+  variants = [] of Variant
+
+  has_variant = false
+  v_regex : String? = nil
+  v_rules = [] of Rule
+
+  has_rule = false
+  r_name = ""
+  r_file = ""
+  r_find : String? = nil
+  r_replace : String? = nil
+  r_count = 1
+  r_must = [] of String
+
+  flush_rule = -> {
+    if has_rule
+      if r_file.empty? || r_find.nil? || r_replace.nil?
+        abort "template #{path}: rule \"#{r_name}\" missing file/find/replace"
+      end
+      v_rules << Rule.new(r_name, r_file, r_find.not_nil!, r_replace.not_nil!, r_count, r_must)
+      has_rule = false
+      r_name = ""
+      r_file = ""
+      r_find = nil
+      r_replace = nil
+      r_count = 1
+      r_must = [] of String
+    end
+  }
+
+  flush_variant = -> {
+    if has_variant
+      variants << Variant.new(v_regex, v_rules)
+      has_variant = false
+      v_regex = nil
+      v_rules = [] of Rule
+    end
+  }
+
+  i = 0
+  while i < lines.size
+    line = lines[i]
+    t = line.strip
+
+    if t == "find <<<" || t == "replace <<<"
+      is_find = t.starts_with?("find")
+      buf = [] of String
+      i += 1
+      while i < lines.size && lines[i].strip != "<<<"
+        buf << lines[i]
+        i += 1
+      end
+      i += 1 # consume closing <<<
+      content = buf.join("\n")
+      if is_find
+        r_find = content
+      else
+        r_replace = content
+      end
+      next
+    end
+    i += 1
+
+    next if t.empty? || t.starts_with?("#")
+
+    if t == "variant" || t.starts_with?("variant ")
+      flush_rule.call
+      flush_variant.call
+      rx = t.size > 7 ? t[7..].strip : ""
+      has_variant = true
+      v_regex = rx.empty? ? nil : rx
+      v_rules = [] of Rule
+      next
+    end
+
+    if t.starts_with?("rule ")
+      flush_rule.call
+      unless has_variant
+        has_variant = true
+        v_regex = nil
+        v_rules = [] of Rule
+      end
+      has_rule = true
+      r_name = t[5..].strip
+      next
+    end
+
+    idx = line.index(':')
+    next unless idx && idx > 0
+    key = line[0...idx].strip
+    val = line[(idx + 1)..].strip
+    if has_rule
+      case key
+      when "file"  then r_file = val
+      when "count" then r_count = val.to_i? || 1
+      when "must"  then r_must << val
+      end
+    else
+      case key
+      when "id"       then id = val
+      when "target"   then target = val
+      when "name"     then name = val
+      when "author"   then author = val
+      when "versions" then versions = val
+      when "source"   then source = val
+      end
+    end
+  end
+
+  flush_rule.call
+  flush_variant.call
+  abort "template #{path}: missing id/target" if id.empty? || target.empty?
+  Template.new(id, name, author, versions, source, target, variants, path)
+end
 
 def load_templates : Array(Template)
   # Dir.glob patterns use '/' on every platform; normalise the Windows join.
-  Dir.glob("#{TPL_DIR}/*.yml".gsub('\\', '/')).sort.map do |p|
-    Template.new(YAML.parse(File.read(p)), p)
+  Dir.glob("#{TPL_DIR}/*.rid".gsub('\\', '/')).sort.map do |p|
+    parse_rid(File.read(p), p)
   end
 end
 
@@ -68,44 +198,36 @@ def expand(repl : String, md : Regex::MatchData) : String
   end
 end
 
-def apply_rule(root : String, rule : YAML::Any, write : Bool)
-  name = rule["name"].as_s
-  file = rule["file"].as_s
-  path = File.join([root].concat(file.split("/")))
-  abort "PATCH FAILED [#{name}]: missing file #{file}" unless File.file?(path)
+def apply_rule(root : String, rule : Rule, write : Bool)
+  path = File.join([root].concat(rule.file.split("/")))
+  abort "PATCH FAILED [#{rule.name}]: missing file #{rule.file}" unless File.file?(path)
 
   raw = File.read(path)
   crlf = raw.includes?("\r\n")
   src = raw.gsub("\r\n", "\n")
-  want = rule["count"]?.try(&.as_i) || 1
-  # Crystal's MULTILINE option = PCRE2 DOTALL ('.' matches newlines); '^'/'$'
-  # are line-level by default, matching re.DOTALL for these anchor-free patterns.
-  rx = Regex.new(rule["find"].as_s, Regex::Options::MULTILINE)
-  repl = rule["replace"].as_s
+  want = rule.count
+  # Crystal's MULTILINE option = PCRE2 DOTALL ('.' matches newlines).
+  rx = Regex.new(rule.find, Regex::Options::MULTILINE)
 
   replaced = 0
   new = src.gsub(rx) do |match|
     if replaced < want
       replaced += 1
-      expand(repl, $~)
+      expand(rule.replace, $~)
     else
       match
     end
   end
 
   if replaced != want
-    abort "PATCH FAILED [#{name}]: anchor matched #{replaced}x (want #{want}) in #{file}"
+    abort "PATCH FAILED [#{rule.name}]: anchor matched #{replaced}x (want #{want}) in #{rule.file}"
   end
-
-  if mc = rule["must_contain"]?
-    mc.as_a.each do |anchor|
-      a = anchor.as_s
-      abort "PATCH FAILED [#{name}]: result missing #{a.inspect}" unless new.includes?(a)
-    end
+  rule.must.each do |anchor|
+    abort "PATCH FAILED [#{rule.name}]: result missing #{anchor.inspect}" unless new.includes?(anchor)
   end
 
   File.write(path, crlf ? new.gsub("\n", "\r\n") : new) if write
-  puts "  ok [#{name}]"
+  puts "  ok [#{rule.name}]"
 end
 
 def read_version(decoded : String) : {String, String}
@@ -124,9 +246,9 @@ def read_package(decoded : String) : String?
   end
 end
 
-def select_variant(data : YAML::Any, version_name : String) : YAML::Any?
-  (data["variants"]?.try(&.as_a) || [] of YAML::Any).each do |v|
-    rx = v["match"]?.try(&.["version_name"]?).try(&.as_s) || ".*"
+def select_variant(t : Template, version_name : String) : Variant?
+  t.variants.each do |v|
+    rx = v.version_name || ".*"
     return v if Regex.new(rx).matches?(version_name)
   end
   nil
@@ -135,8 +257,8 @@ end
 def select_template(package : String?, version_name : String, templates : Array(Template)) : Template?
   return nil if package.nil?
   templates.each do |t|
-    next unless t.data["target"]?.try(&.["package"]?).try(&.as_s) == package
-    return t if select_variant(t.data, version_name)
+    next unless t.target == package
+    return t if select_variant(t, version_name)
   end
   nil
 end
@@ -144,59 +266,55 @@ end
 def cmd_check(decoded : String, only : String?)
   templates = load_templates
   if o = only
-    templates = templates.select { |t| t.data["id"].as_s == o || t.path.ends_with?(o) }
+    templates = templates.select { |t| t.id == o || t.path.ends_with?(o) }
   end
   ver, code = read_version(decoded)
   pkg = read_package(decoded)
   puts "decoded: version=#{ver} code=#{code} package=#{pkg}"
 
   tpl = select_template(pkg, ver, templates)
-  tpl ||= templates.find { |t| select_variant(t.data, ver) }
+  tpl ||= templates.find { |t| select_variant(t, ver) }
   abort "no template matches version #{ver}" unless tpl
 
-  variant = select_variant(tpl.data, ver).not_nil!
-  patches = variant["patches"].as_a
-  puts "template: #{tpl.data["id"].as_s}  variant: #{variant["match"]?}  rules: #{patches.size}"
-  patches.each { |rule| apply_rule(decoded, rule, false) }
-  puts "CHECK OK: all #{patches.size} rules match"
+  variant = select_variant(tpl, ver).not_nil!
+  puts "template: #{tpl.id}  variant: #{variant.version_name || "*"}  rules: #{variant.rules.size}"
+  variant.rules.each { |rule| apply_rule(decoded, rule, false) }
+  puts "CHECK OK: all #{variant.rules.size} rules match"
 end
 
 def cmd_patch(decoded : String, only : String?, no_res : Bool)
   templates = load_templates
   if o = only
-    templates = templates.select { |t| t.data["id"].as_s == o }
+    templates = templates.select { |t| t.id == o }
   end
   ver, _ = read_version(decoded)
   pkg = read_package(decoded)
 
   tpl = select_template(pkg, ver, templates)
-  tpl ||= templates.find { |t| select_variant(t.data, ver) }
+  tpl ||= templates.find { |t| select_variant(t, ver) }
   abort "no template matches version #{ver}" unless tpl
 
-  variant = select_variant(tpl.data, ver).not_nil!
+  variant = select_variant(tpl, ver).not_nil!
   applied = 0
   skipped = 0
-  variant["patches"].as_a.each do |rule|
-    if no_res && rule["file"].as_s.starts_with?("res/")
-      puts "  skip (res) [#{rule["name"].as_s}]"
+  variant.rules.each do |rule|
+    if no_res && rule.file.starts_with?("res/")
+      puts "  skip (res) [#{rule.name}]"
       skipped += 1
       next
     end
     apply_rule(decoded, rule, true)
     applied += 1
   end
-  puts "PATCH OK: #{applied} applied, #{skipped} skipped (template #{tpl.data["id"].as_s})"
+  puts "PATCH OK: #{applied} applied, #{skipped} skipped (template #{tpl.id})"
 end
 
 def cmd_list
   load_templates.each do |t|
-    d = t.data
-    variants = d["variants"].as_a
-    vers = variants.map { |v| v["match"]?.try(&.["version_name"]?).try(&.as_s) || "*" }.join(", ")
-    name = d["info"]?.try(&.["name"]?).try(&.as_s) || ""
-    puts "%-28s %s" % [d["id"].as_s, name]
-    puts "    target : #{d["target"]["package"].as_s}  versions: #{vers}"
-    puts "    rules  : #{variants.map { |v| v["patches"].as_a.size.to_s }.join(", ")}"
+    vers = t.variants.map { |v| v.version_name || "*" }.join(", ")
+    puts "%-28s %s" % [t.id, t.name]
+    puts "    target : #{t.target}  versions: #{vers}"
+    puts "    rules  : #{t.variants.map { |v| v.rules.size.to_s }.join(", ")}"
   end
 end
 
@@ -227,10 +345,9 @@ def cmd_apply(apk : String, out_path : String, apktool_jar : String, build_tools
 
   tpl = select_template(pkg, ver, templates)
   abort "no template for #{pkg} #{ver}" unless tpl
-  variant = select_variant(tpl.data, ver).not_nil!
-  patches = variant["patches"].as_a
-  puts "applying template #{tpl.data["id"].as_s} (#{patches.size} rules)"
-  patches.each { |rule| apply_rule(dec, rule, true) }
+  variant = select_variant(tpl, ver).not_nil!
+  puts "applying template #{tpl.id} (#{variant.rules.size} rules)"
+  variant.rules.each { |rule| apply_rule(dec, rule, true) }
   run(apktool + ["b", dec, "-o", unsigned], jenv)
 
   if no_sign
