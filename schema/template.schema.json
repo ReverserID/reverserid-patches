@@ -14,6 +14,8 @@
         "severity": { "type": "string", "enum": ["info", "low", "medium", "high"] },
         "tags": { "type": "array", "items": { "type": "string" } },
         "description": { "type": "string" },
+        "versions": { "type": "string", "description": "display string for supported versions, e.g. '1.3 · 1.4'" },
+        "source": { "type": "string", "description": "URL to obtain the original/unpatched APK" },
         "reference": { "type": "array", "items": { "type": "string" } }
       }
     },
