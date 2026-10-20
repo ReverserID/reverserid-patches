@@ -13,6 +13,17 @@
       "versions": ["1.3", "1.4"],
       "path": "templates/net.wowsoftware.hidemyemulator.rid",
       "description": "Forces lifetime-premium license state; unlocks all protection toggles + Apply, removes the paywall."
+    },
+    {
+      "id": "linkaja-unpin-root",
+      "name": "LinkAja Root Bypass + SSL Unpin",
+      "author": "reverser.id",
+      "severity": "info",
+      "tags": ["ssl", "pinning", "root", "emulator", "security", "unpin"],
+      "target": "com.telkom.mwallet",
+      "versions": ["4.45.0"],
+      "path": "templates/com.telkom.mwallet.rid",
+      "description": "Removes client-side SSL certificate pinning (okhttp3 + squareup CertificatePinner, ControllerSSL) and stops the root/emulator (server status 12) block from latching LinkAja on splash."
     }
   ]
 }
