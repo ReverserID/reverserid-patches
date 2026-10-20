@@ -3,3 +3,5 @@
 .verify-*
 __pycache__/
 *.exe
+*.pdb
+*.dll
