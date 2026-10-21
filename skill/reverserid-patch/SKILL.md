@@ -61,9 +61,13 @@ extras that only land on desktop builds.
    APK's package and versionName.
 2. **Decode.** `apktool d -r -f <apk> -o <dir>` (smali-only, matches on-device).
    Use a full decode only when authoring `res/` rules.
-3. **Locate the gate.** Find the method/field that decides the paid/locked
-   state. Read `references/reverse-engineering.md` for jadx/smali/REA tactics
-   (license checks, boolean gates, enum/state returns, paywall branches).
+3. **Locate the gate — decompile + observe, never guess.** Decompile with
+   **JADX** (jadx MCP: `search_classes_by_keyword`, `get_class_source`,
+   `get_xrefs_to_method`, `get_smali_of_class`) to find the deciding
+   method/field and get the exact smali to anchor on. Then confirm it is the
+   *real* gate at runtime with **Frida** (frida MCP: `java_hook_method` to log
+   return values, `android_ssl_unpin` for pinning). See
+   `references/reverse-engineering.md`.
 4. **Design minimal rules.** Change the smallest surface that flips behavior —
    force a return value, rewrite one branch, or map a state constructor. Prefer
    a handful of exact, guarded edits over broad rewrites. See
@@ -109,8 +113,9 @@ re-anchored rules; keep the old variant for the old version.
 
 - `references/authoring.md` — the `.rid` format field-by-field, regex/backref
   rules, worked example.
-- `references/reverse-engineering.md` — finding the gate: jadx, smali patterns,
-  REA/JADX MCP tactics, common license/paywall shapes.
+- `references/reverse-engineering.md` — the research loop: JADX decompilation
+  (keyword → Java → xref → smali) + Frida dynamic confirmation (hook returns,
+  resolve obfuscated/live classes, SSL-unpin), plus REA headless equivalents.
 - `references/on-device.md` — how `RevID Patcher` runs apktool/apksigner
   in-process, the SELinux constraint, the DEX bundle, and res-rule skipping.
 - `references/verify.md` — install + functional test loop (launch/crash check,
