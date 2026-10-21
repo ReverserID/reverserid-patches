@@ -1,6 +1,6 @@
 ---
 name: reverserid-patch
-description: Reverse-engineer an Android app and author, verify, and ship a reverser.id nuclei-style patch template for the reverserid-patches repo, then patch on-device with RevID Patcher. Use when adding a new app or version to the repo, fixing a template whose anchors no longer match, or explaining how the on-device patch pipeline works. Not for ordinary source-repo analysis.
+description: Reverse-engineer an Android app, author a reverser.id `.rid` patch template, then actually patch, install, and verify it works — on device with RevID Patcher or via apply.cr. `--check` is the compile step; building, installing, and exercising the gated feature is the test step. Use when adding or fixing a patch in the reverserid-patches repo, or reasoning about the on-device patch/verify pipeline. Not for ordinary source-repo analysis.
 metadata:
   version: "1"
   repo: reverserid-patches
@@ -75,10 +75,16 @@ extras that only land on desktop builds.
    `count` (no misses). Fix anchors until clean.
 7. **Register** the template in `index.json` (id, name, author, target,
    versions, path, description, tags).
-8. **Smoke the full pipeline** (desktop): `./apply app.apk --out out.apk`, or
-   `./apply --patch <dir> --no-res` + `apktool b` + sign for on-device parity;
-   install and confirm the feature. `--no-res` reproduces the no-aapt2 build.
-9. **Commit + push** (see below).
+8. **Patch for real.** Build the signed APK — RevID Patcher on device, or
+   `./apply app.apk --out out.apk` on desktop (`--patch <dir> --no-res` for
+   on-device/no-aapt2 parity). `--check` matched anchors; it does NOT prove the
+   app runs or unlocks.
+9. **Verify it works** (`references/verify.md`): uninstall the original, install
+   the patched APK, confirm it **launches without crashing**, then drive the UI
+   to the gated feature and confirm it is unlocked. Re-check after `pm clear` so
+   it is the patch, not a cached trial. A green `--check` with a crash or a
+   still-locked feature is a FAIL — re-open the gate and re-anchor.
+10. **Commit + push** (see below).
 
 ## Template semantics (correctness-critical)
 
@@ -101,16 +107,20 @@ re-anchored rules; keep the old variant for the old version.
 
 ## Reference files
 
-- `references/authoring.md` — template schema, field-by-field, regex/backref
+- `references/authoring.md` — the `.rid` format field-by-field, regex/backref
   rules, worked example.
 - `references/reverse-engineering.md` — finding the gate: jadx, smali patterns,
   REA/JADX MCP tactics, common license/paywall shapes.
 - `references/on-device.md` — how `RevID Patcher` runs apktool/apksigner
   in-process, the SELinux constraint, the DEX bundle, and res-rule skipping.
+- `references/verify.md` — install + functional test loop (launch/crash check,
+  exercise the feature, `pm clear`, optional Frida/uiautomator2 proof), pass/fail.
 
 ## Finish
 
-A patch is done when: `./apply --check` is clean on every supported version,
-the template is in `index.json`, a desktop `--no-res` smoke build installs and
-the feature works, and the change is committed and pushed. Then it appears in
-the `RevID Patcher` catalog automatically.
+A patch is done when: `./apply --check` is clean on every supported version, the
+template is in `index.json`, and — the real bar — the patched APK **installs,
+launches, and the gated feature is observably unlocked and survives a
+`pm clear`** (see `references/verify.md`). Then commit + push; it appears in the
+`RevID Patcher` catalog automatically. Never call a patch done on a green
+`--check` alone.
