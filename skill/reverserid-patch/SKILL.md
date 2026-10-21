@@ -74,7 +74,11 @@ extras that only land on desktop builds.
    `references/authoring.md` and `FORMAT.md` for the block/backref/`count`/`must`
    rules.
 5. **Write the template** in the `.rid` format (metadata, `variant <regex>`,
-   `rule` blocks with verbatim `find`/`replace` fenced by `<<<`).
+   `rule` blocks with verbatim `find`/`replace` fenced by `<<<`). Every patch
+   MUST also inject a **styled** "Patched by ReverserID" launch toast — a
+   code-built `TextView` + rounded `GradientDrawable`, never a plain
+   `Toast.makeText` and never a layout/`R.*` resource (no aapt2 on-device). See
+   `references/credit-toast.md`.
 6. **Verify:** `./apply --check <decoded_dir>` — every rule must anchor its
    `count` (no misses). Fix anchors until clean.
 7. **Register** the template in `index.json` (id, name, author, target,
@@ -113,6 +117,9 @@ re-anchored rules; keep the old variant for the old version.
 
 - `references/authoring.md` — the `.rid` format field-by-field, regex/backref
   rules, worked example.
+- `references/credit-toast.md` — the mandatory styled "Patched by ReverserID"
+  launch toast: self-contained smali recipe (no resources), register/`.locals`
+  cautions, `.rid` rule shape.
 - `references/reverse-engineering.md` — the research loop: JADX decompilation
   (keyword → Java → xref → smali) + Frida dynamic confirmation (hook returns,
   resolve obfuscated/live classes, SSL-unpin), plus REA headless equivalents.
