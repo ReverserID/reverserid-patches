@@ -3,9 +3,9 @@ target: com.telkom.mwallet
 name: LinkAja Root Bypass + SSL Unpin
 author: reverser.id
 tags: ssl, pinning, root, emulator, security, unpin
-versions: 4.45.0
+versions: 4.45.0 · 4.46.1
 source: https://play.google.com/store/apps/details?id=com.telkom.mwallet
-desc: Removes client-side SSL certificate pinning and the root/emulator block for LinkAja (com.telkom.mwallet 4.45.0). Neutralizes okhttp3 + squareup CertificatePinner, empties ControllerSSL pinning, and stops the "root emulator detected" (server status 12) branch from latching the app on splash.
+desc: Removes client-side SSL certificate pinning and the root/emulator block for LinkAja (com.telkom.mwallet 4.45.0 and 4.46.1). Neutralizes okhttp3 + squareup CertificatePinner, empties ControllerSSL pinning, and stops the "root emulator detected" (server status 12) branch from latching the app on splash.
 
 variant ^4\.45
 
@@ -57,6 +57,69 @@ replace <<<
 
 rule SplashViewModel root/emulator (status 12) -> proceed
 file: smali_classes7/module/feature/onboardingapp/presentation/splash/SplashViewModel.smali
+count: 1
+must: checkIsLogin
+find <<<
+    iput-boolean v1, p0, Lmodule/feature/onboardingapp/presentation/splash/SplashViewModel;->isRooted:Z
+<<<
+replace <<<
+    const/4 v1, 0x0
+
+    iput-boolean v1, p0, Lmodule/feature/onboardingapp/presentation/splash/SplashViewModel;->isRooted:Z
+
+    invoke-direct {p0, v1}, Lmodule/feature/onboardingapp/presentation/splash/SplashViewModel;->checkIsLogin(Z)V
+<<<
+
+variant ^4\.46
+
+rule okhttp3 CertificatePinner.check$okhttp -> noop
+file: smali_classes5/okhttp3/CertificatePinner.smali
+count: 1
+must: return-void
+find <<<
+\.method public final check\$okhttp\(Ljava/lang/String;Lkotlin/jvm/functions/Function0;\)V.*?\.end method
+<<<
+replace <<<
+.method public final check$okhttp(Ljava/lang/String;Lkotlin/jvm/functions/Function0;)V
+    .locals 0
+    return-void
+.end method
+<<<
+
+rule squareup CertificatePinner.check -> noop
+file: smali_classes14/com/squareup/okhttp/CertificatePinner.smali
+count: 1
+must: return-void
+find <<<
+\.method public check\(Ljava/lang/String;Ljava/util/List;\)V.*?\.end method
+<<<
+replace <<<
+.method public check(Ljava/lang/String;Ljava/util/List;)V
+    .locals 0
+    return-void
+.end method
+<<<
+
+rule ControllerSSL.getPinning -> empty pinner
+file: smali_classes13/module/domain/security/config/rest/ControllerSSL.smali
+count: 1
+must: Lokhttp3/CertificatePinner$Builder;->build
+find <<<
+\.method public final getPinning\(\)Lokhttp3/CertificatePinner;.*?\.end method
+<<<
+replace <<<
+.method public final getPinning()Lokhttp3/CertificatePinner;
+    .locals 1
+    new-instance v0, Lokhttp3/CertificatePinner$Builder;
+    invoke-direct {v0}, Lokhttp3/CertificatePinner$Builder;-><init>()V
+    invoke-virtual {v0}, Lokhttp3/CertificatePinner$Builder;->build()Lokhttp3/CertificatePinner;
+    move-result-object v0
+    return-object v0
+.end method
+<<<
+
+rule SplashViewModel root/emulator (status 12) -> proceed
+file: smali_classes6/module/feature/onboardingapp/presentation/splash/SplashViewModel.smali
 count: 1
 must: checkIsLogin
 find <<<
