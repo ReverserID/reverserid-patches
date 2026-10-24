@@ -351,6 +351,17 @@ replace <<<
     invoke-direct {v8, v9, v9}, Lob/r;-><init>(Ljava/lang/Long;Ljava/lang/String;)V
 <<<
 
+rule sb/y no-update gate
+file: smali/sb/y.smali
+count: 1
+find <<<
+(\.method public static a\(ILsb/q;\)Lsb/n0;\n    \.locals 17\n\n    \.line 1\n)    move/from16 v0, p0
+<<<
+replace <<<
+$1    sget-object p0, Lsb/m0;->a:Lsb/m0;
+
+    return-object p0
+<<<
 rule values status -> Premium
 file: res/values/strings.xml
 count: 1

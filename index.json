@@ -12,7 +12,7 @@
       "target": "net.wowsoftware.hidemyemulator",
       "versions": ["1.3", "1.4", "1.5"],
       "path": "templates/net.wowsoftware.hidemyemulator.rid",
-      "description": "Forces lifetime-premium license state; unlocks all protection toggles + Apply, removes the paywall, adds patched-by credit + styled launch toast."
+      "description": "Forces lifetime-premium license state; unlocks all protection toggles + Apply, removes the paywall, disables forced updates, adds patched-by credit + styled launch toast."
     },
     {
       "id": "linkaja-unpin-root",
